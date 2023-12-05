@@ -1,0 +1,194 @@
+---
+title: "Assignment_MarcSanchez"
+output: html_document
+date: "2023-12-04"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Statement
+
+We're part of an academic community at Warwick.
+
+Whether studying, teaching, or researching, we’re all taking part in an expert conversation which must meet standards of academic integrity. When we all meet these standards, we can take pride in our own academic achievements, as individuals and as an academic community.
+
+Academic integrity means committing to honesty in academic work, giving credit where we've used others' ideas and being proud of our own achievements.
+
+In submitting my work I confirm that:
+
+1. I have read the guidance on academic integrity provided in the Student Handbook and understand the University regulations in relation to Academic Integrity. I am aware of the potential consequences of Academic Misconduct.
+
+2. I declare that the work is all my own, except where I have stated otherwise.
+
+3. No substantial part(s) of the work submitted here has also been submitted by me in other credit bearing assessments courses of study (other than in certain cases of a resubmission of a piece of work), and I acknowledge that if this has been done this may lead to an appropriate sanction.
+
+4. Where a generative Artificial Intelligence such as ChatGPT has been used I confirm I have abided by both the University guidance and specific requirements as set out in the Student Handbook and the Assessment brief. I have clearly acknowledged the use of any generative Artificial Intelligence in my submission, my reasoning for using it and which generative AI (or AIs) I have used. Except where indicated the work is otherwise entirely my own.
+
+5. I understand that should this piece of work raise concerns requiring investigation in relation to any of points above, it is possible that other work I have submitted for assessment will be checked, even if marks (provisional or confirmed) have been published.
+
+6. Where a proof-reader, paid or unpaid was used, I confirm that the proofreader was made aware of and has complied with the University’s proofreading policy.
+
+7. I consent that my work may be submitted to Turnitin or other analytical technology. I understand the use of this service (or similar), along with other methods of maintaining the integrity of the academic process, will help the University uphold academic standards and assessment fairness.
+
+Privacy statement
+
+The data on this form relates to your submission of coursework. The date and time of your submission, your identity, and the work you have submitted will be stored. We will only use this data to administer and record your coursework submission.
+
+## Loading Yelp Data
+
+We will work with 3 main datasets: the two small datasets provided and the business dataset.
+
+```{r, echo=FALSE}
+load("~/Desktop/yelp_review_small.Rda")
+load("~/Desktop/yelp_user_small.Rda")
+library(jsonlite)
+business<- stream_in(file("~/Desktop/yelp_academic_dataset_business.json"))
+```
+
+## Merging Data and Cleaning
+
+We merge the three datasets into one and delete unnecessary variables and NAs. I merged the datasets to end with a data frame of all the reviews made, including the variables of the user that has made the review and of the business. Most of the deleted columns are deleted because of unnecesary information like business location. I changed the type of variable for variable so that they can be in the model, such as changing from True or False to binary.
+
+The response variable that we want to predict is not continuous. It is a discrete variable that takes values between 1 and 5, the amount of stars given by a user for a business. Therefore, a change is needed to reflect this. In this case, I changed the type of variable of the response variable "stars.x" using as.factor(). Also I used this method to change the variables "stars.y", which reflects the general stars that a business has on Yelp, and "RestaurantsPriceRange2" which reflects in ranges between 1 and 4 the expensiveness of the particular business. Lastly, I encoded the variable "RestaurantsPriceRange2" into the 4 categories separately.
+
+```{r}
+dataset_all <- merge(review_data_small, user_data_small, by="user_id", all.x=TRUE)
+dataset_all <- merge(dataset_all, business, by="business_id")
+library(tidyr)
+library(dplyr)
+dataset<-data.frame(dataset_all)
+dataset <- unnest(dataset, attributes)
+dataset <- unnest(dataset, hours)
+dataset = subset(dataset, select = -c(1:3, 8:10, 12, 16, 17, 28, 31:37, 40, 41, 43, 45, 48:54, 56:87))
+dataset <- drop_na(dataset, average_stars)
+dataset <- drop_na(dataset, BusinessAcceptsCreditCards)
+dataset <- drop_na(dataset, RestaurantsPriceRange2)
+dataset <- drop_na(dataset, RestaurantsTakeOut)
+dataset <- drop_na(dataset, RestaurantsDelivery)
+dataset <- drop_na(dataset, RestaurantsReservations)
+
+dataset$BusinessAcceptsCreditCards<-ifelse(dataset$BusinessAcceptsCreditCards, 1, 0)
+dataset$RestaurantsTakeOut<-ifelse(dataset$RestaurantsTakeOut, 1, 0)
+dataset$RestaurantsDelivery<-ifelse(dataset$RestaurantsDelivery, 1, 0)
+dataset$RestaurantsReservations<-ifelse(dataset$RestaurantsReservations, 1, 0)
+
+dataset$RestaurantsPriceRange2<-as.factor(dataset$RestaurantsPriceRange2)
+dataset$stars.x<-as.factor(dataset$stars.x)
+dataset$stars.y<-as.factor(dataset$stars.y)
+
+dataset<-drop_na(dataset, RestaurantsDelivery)
+dataset<-drop_na(dataset, RestaurantsReservations)
+dataset<-drop_na(dataset, RestaurantsTakeOut)
+dataset<-drop_na(dataset, BusinessAcceptsCreditCards)
+dataset<-dataset %>%
+  filter(dataset$RestaurantsPriceRange2 != "None")
+dataset <- dataset %>%
+  mutate(category_1 = ifelse(RestaurantsPriceRange2 == 1, 1, 0),
+         category_2 = ifelse(RestaurantsPriceRange2 == 2, 1, 0),
+         category_3 = ifelse(RestaurantsPriceRange2 == 3, 1, 0),
+         category_4 = ifelse(RestaurantsPriceRange2 == 4, 1, 0))
+dataset=subset(dataset, select = -c(24))
+
+dataset<-data.frame(dataset)
+```
+
+## Choice of Model
+
+From all the models seen in the course, using a boosting ensemble technique is one of the best options for the dataset that we have. In our dataset, we have a lot of predictors. To make a model that fits the most, it would be preferable to study each possible predictor in the dataset to assess their relationship with response variable and decide their relevance in the model that we build. With boosting we can train our model to give importance to the predictors that matter the most, and have the most predicting capacity out of all predictors. This way, we are choosing a model efficiently and precisely. Trees of the model are adapting to remove bias with each model built. Here we use the AdaBoost Model seen in class with the library adabag. This way, we build a model which selects the optimum weights to remove bias in the prediction and outperform other models.
+
+## Developing the First Model
+
+We start by splitting the data into two parts: training sample (90%) and test sample (10%). All possible predictors were included in the dataset. We can analyse the training data by looking at the model itself. Firstly, the error rate of the model is 51.94%, which means that the model is wrong more times than it is correct.
+
+One thing to point out is the relative importance of each predictor in the classification task. We can see this by calling the \$importance nest inside the model. Here we can observe that the model only gave weights to two predictors in the model: "average_stars" and "stars.y". The first represents the average stars that a user has given in all reviews that he/she made on Yelp. The second represents the amount of stars the business has from all the reviews they received on Yelp.
+
+We can look at the confusion matrix by printing the \$confusion call on predictions1. In this table we see the values that the model predicted and the actual values observed in the test sample. It is remarkable to see that the model did not predict a single value of 2 or 3 stars.
+
+```{r}
+library(caret)
+set.seed(1)
+parts = createDataPartition(dataset$stars.x, p = 0.9, list = F)
+train = dataset[parts, ]
+test = dataset[-parts, ]
+library(adabag)
+model_adaboost1<-boosting(stars.x~., data=train, boos=TRUE, mfinal=10)
+predictions1<-predict(model_adaboost1, test)
+print(predictions1$error)
+print(model_adaboost1$importance)
+print(predictions1$confusion)
+
+```
+
+We can verify their predicting power by analising their relationship with the response variable. We do this by plotting each predictor in the x-axis and the response variable in the y-axis.
+
+From the average_stars variable, we see that if the user is used to give 1 star on average, it is not likely at all that he/she gives a 5 star review (as we can observe in the upper left corner there are not observations).
+
+From the stars.y variable we can also see a significant relationship. We can observe that businesses with 1 star ratings on average, are more likely to receive a 1 star rating on a review than a 5 star rating (since the upper left corner has no observations).
+
+```{r, echo=FALSE}
+library(ggplot2)
+ggplot(dataset, aes(x = average_stars, y = stars.x)) +
+  geom_jitter(width = 0.2, height = 0.2) +
+  labs(title = "Relationship between Review Stars and Average Stars Given",
+       x = "Avg. Stars Given by User",
+       y = "Stars of the Review")
+
+ggplot(dataset, aes(x = stars.y, y = stars.x)) +
+  geom_jitter(width = 0.2, height = 0.2) +
+  labs(title = "Relationship between Review Stars and Stars of the Business",
+       x = "Business Stars",
+       y = "Stars of the Review")
+```
+
+We can find predictors that are not improving the accuracy of the model. They mislead the model and worsen its overall precision. For example, the variable "BusinessAcceptsCreditCards" represents a binary that takes 1 if the business can accept card payment, 0 otherwise. Plotting its relationship with the amount of stars, there is no visible difference between businesses that provide this facility and the ones that do not since the observations are distributed in an almost exact way. We observe the same with "BusinessDelivery".
+
+
+```{r, echo=FALSE}
+ggplot(dataset, aes(x = BusinessAcceptsCreditCards, y = stars.x)) +
+  geom_jitter(width = 0.2, height = 0.2) +
+  labs(title = "Relationship between Review Stars and if Bus. Accepts Cards",
+       x = "Business Accept Cards",
+       y = "Stars of the Review")
+
+ggplot(dataset, aes(x = RestaurantsDelivery, y = stars.x)) +
+  geom_jitter(width = 0.2, height = 0.2) +
+  labs(title = "Relationship between Review Stars and if Bus. has Delivery",
+       x = "Business has Delivery",
+       y = "Stars of the Review")
+```
+
+## Modifying the dataset and enhancing model accuracy.
+
+As we have seen, including most of the predictors in the model has lead to negative results in the precision of the model. We change the dataset, deleting the predictors that are not given any importance. We are left with two explanatory variables: stars.y, average_stars. The development of the second model of boosting is included in which we only use average_stars and stars.y as predictors.
+
+```{r}
+dataset_model2<-data.frame(dataset_all)
+dataset_model2 <- unnest(dataset_model2, attributes)
+dataset_model2 <- unnest(dataset_model2, hours)
+dataset_model2 = subset(dataset_model2, select = -c(1:3,5:18,20:37, 39:87))
+dataset_model2 <- drop_na(dataset_model2, average_stars)
+dataset_model2$stars.x<- as.factor(dataset_model2$stars.x)
+dataset_model2$stars.y<-as.factor(dataset_model2$stars.y)
+dataset_model2<-data.frame(dataset_model2)
+
+set.seed(1)
+parts2 = createDataPartition(dataset_model2$stars.x, p = 0.9, list = F)
+train2 = dataset_model2[parts2, ]
+test2 = dataset_model2[-parts2, ]
+model_adaboost2<-boosting(stars.x~., data=train2, boos=TRUE, mfinal=10)
+predictions2<-predict(model_adaboost2, test2)
+print(predictions2$error)
+print(model_adaboost2$importance)
+print(predictions2$confusion)
+
+```
+
+Analyzing the results from the test sample, wesee a substantial decrease in the error rate compared to the first model. Now, the error rate is below 46%, an 11.4% increase in model precision. The improvement in accuracy is mainly due to the fact that, since we are using less predictors and increasing the importance of the ones that are important, we are decreasing the "noise" caused by the other predictors, and increasing the magnitude of the sample at the same time (we go from 150000 observations to 280000).
+
+## Callenges and Wrapping Up
+
+With more time and knowledge there is room to improve this model. I have encountered the limitation of my computer, but I would be interested to apply cross-validation to this model. In the end, we built an "inaccurate model" but we were able to improve its precision by more than 11%.
+
+The main challenge that I encountered is the selection of the predictors. Seeing the magnitude of the datasets, I was keen on using a lot of predictors and most of them made sense from a logical point of view. For example, the binary variable of a business that accepts credit card payments. I imagined variables like this to have an impact on the amount of stars a user gives to a business. I spent most of my time assessing the validity of the predictors available, seeing not enough improvement in model performance. I was able to (partially) solve this issue with boosting. With boosting I could see the relative importance that the model was giving to each predictor on every series built. To my surprise, most of the predictors that made sense were not helpful in building an accurate model.
